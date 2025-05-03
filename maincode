@@ -1,0 +1,84 @@
+from flask import Flask, render_template, request
+import pandas as pd
+import numpy as np
+import re
+import os
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
+
+app = Flask(__name__)
+
+# Load cybersecurity FAQ dataset
+dataset_url = "https://raw.githubusercontent.com/Aravindan2311/DummyCyberSecurityDataset/main/cybersecurity_faq.csv"
+df = pd.read_csv(dataset_url)
+df.dropna(inplace=True)
+
+# Clean text
+def clean_text(text):
+    if isinstance(text, str):
+        text = text.lower()
+        text = re.sub(r'[^\w\s]', '', text)
+        return text.strip()
+    return ""
+
+# Apply text cleaning
+df["question_clean"] = df["question"].apply(clean_text)
+
+# Vectorizer for questions
+vectorizer = TfidfVectorizer(stop_words='english')
+question_vectors = vectorizer.fit_transform(df["question_clean"])
+
+# Small talk responses
+small_talk_responses = {
+    "hi": "Hello! How can I help you with cybersecurity today?",
+    "hello": "Hi there! Ask me anything about cybersecurity.",
+    "how are you": "I'm just a bot, but I'm here to help you!",
+    "thanks": "You're welcome! Feel free to ask more.",
+    "bye": "Goodbye! Stay safe online!"
+}
+
+# Log chat
+def log_interaction(question, answer):
+    with open("chat_log.csv", "a", encoding="utf-8") as f:
+        f.write(f'"{question}","{answer}"\n')
+
+# Get response
+def get_answer(user_input):
+    cleaned = clean_text(user_input)
+
+    # Small talk handling
+    if cleaned in small_talk_responses:
+        answer = small_talk_responses[cleaned]
+        log_interaction(user_input, answer)
+        return answer
+
+    # Vectorize input and calculate similarity
+    user_vector = vectorizer.transform([cleaned])
+    similarity_scores = cosine_similarity(user_vector, question_vectors).flatten()
+    best_match = np.argmax(similarity_scores)
+    confidence = similarity_scores[best_match]
+
+    # Confidence threshold check
+    if confidence < 0.3:
+        top_indexes = similarity_scores.argsort()[-3:][::-1]
+        suggestions = df["question"].iloc[top_indexes].tolist()
+        suggestion_text = "\n- ".join(suggestions)
+        answer = f"I'm not sure. Did you mean:\n- {suggestion_text}?"
+    else:
+        answer = df["answer"].iloc[best_match]
+
+    # Log interaction
+    log_interaction(user_input, answer)
+    return answer
+
+# Routes
+@app.route("/", methods=["GET", "POST"])
+def index():
+    answer = None
+    if request.method == "POST":
+        question = request.form["question"]
+        answer = get_answer(question)
+    return render_template("index.html", answer=answer)
+
+if __name__ == "__main__":
+    app.run(debug=True) 
